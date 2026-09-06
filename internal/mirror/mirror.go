@@ -223,3 +223,69 @@ func removeEmptyDirectories(root string) error {
 
 	return nil
 }
+
+// Remove removes only Markdown files and empty directories from a mirror
+// destination. Non-Markdown files are never deleted.
+func Remove(destination string) error {
+	destination, err := filepath.Abs(destination)
+	if err != nil {
+		return fmt.Errorf("resolve destination path: %w", err)
+	}
+
+	destination = filepath.Clean(destination)
+
+	info, err := os.Stat(destination)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("stat destination: %w", err)
+	}
+
+	if !info.IsDir() {
+		return fmt.Errorf("destination is not a directory: %s", destination)
+	}
+
+	err = filepath.WalkDir(destination, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return fmt.Errorf("walk %s: %w", path, walkErr)
+		}
+
+		if entry.IsDir() {
+			return nil
+		}
+
+		if !isMarkdown(entry.Name()) {
+			return nil
+		}
+
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove %s: %w", path, err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	if err := removeEmptyDirectories(destination); err != nil {
+		return fmt.Errorf("remove empty directories: %w", err)
+	}
+
+	entries, err := os.ReadDir(destination)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read destination: %w", err)
+	}
+
+	if len(entries) == 0 {
+		if err := os.Remove(destination); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove destination: %w", err)
+		}
+	}
+
+	return nil
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -164,7 +165,21 @@ func runRemove() {
 		os.Exit(1)
 	}
 
+	cfg, err := loadConfigFromPath(configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	destination := filepath.Join(cfg.Vault, removed.Name)
+
+	if err := mirror.Remove(destination); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: remove project mirror: %v\n", err)
+		os.Exit(1)
+	}
+
 	fmt.Printf("✓ Project removed: %s\n", removed.Name)
+
 	fmt.Printf("  Source: %s\n", removed.Source)
 }
 

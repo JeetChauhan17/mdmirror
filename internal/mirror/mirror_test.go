@@ -117,6 +117,59 @@ func TestMarkdownExtensionIsCaseInsensitive(t *testing.T) {
 	assertExists(t, filepath.Join(destination, "mixed.MaRkDoWn"))
 }
 
+func TestRemoveDeletesMarkdownAndEmptyDirectories(t *testing.T) {
+	destination := t.TempDir()
+
+	writeTestFile(t, destination, "README.md", "# Project")
+	writeTestFile(t, destination, "docs/architecture.md", "# Architecture")
+	writeTestFile(t, destination, "docs/deep/notes.markdown", "# Notes")
+	writeTestFile(t, destination, "keep.txt", "do not delete")
+
+	if err := Remove(destination); err != nil {
+		t.Fatalf("Remove() failed: %v", err)
+	}
+
+	assertNotExists(t, filepath.Join(destination, "README.md"))
+	assertNotExists(t, filepath.Join(destination, "docs"))
+	assertExists(t, filepath.Join(destination, "keep.txt"))
+	assertExists(t, destination)
+}
+
+func TestRemoveDeletesDestinationWhenEmpty(t *testing.T) {
+	root := t.TempDir()
+	destination := filepath.Join(root, "project")
+
+	writeTestFile(t, destination, "README.md", "# Project")
+
+	if err := Remove(destination); err != nil {
+		t.Fatalf("Remove() failed: %v", err)
+	}
+
+	assertNotExists(t, destination)
+}
+
+func TestRemoveMissingDestinationIsNoOp(t *testing.T) {
+	root := t.TempDir()
+	destination := filepath.Join(root, "missing")
+
+	if err := Remove(destination); err != nil {
+		t.Fatalf("Remove() failed: %v", err)
+	}
+}
+
+func TestRemoveRejectsFileDestination(t *testing.T) {
+	root := t.TempDir()
+	destination := filepath.Join(root, "destination")
+
+	if err := os.WriteFile(destination, []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Remove(destination); err == nil {
+		t.Fatal("Remove() should reject a file destination")
+	}
+}
+
 func writeTestFile(t *testing.T, root, relativePath, content string) {
 	t.Helper()
 

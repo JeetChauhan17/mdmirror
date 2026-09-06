@@ -3,12 +3,10 @@ package app
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/JeetChauhan17/mdmirror/internal/config"
+	"github.com/JeetChauhan17/mdmirror/internal/mirror"
 	"github.com/JeetChauhan17/mdmirror/internal/watcher"
 )
 
@@ -76,7 +74,7 @@ func (m *ProjectManager) Reconcile(
 
 		m.stopProjectLocked(project)
 
-		if err := removeProjectMirror(project.config.Destination); err != nil {
+		if err := mirror.Remove(project.config.Destination); err != nil {
 			return fmt.Errorf(
 				"remove mirror for project %q: %w",
 				name,
@@ -105,7 +103,7 @@ func (m *ProjectManager) Reconcile(
 
 		m.stopProjectLocked(existing)
 
-		if err := removeProjectMirror(existing.config.Destination); err != nil {
+		if err := mirror.Remove(existing.config.Destination); err != nil {
 			return fmt.Errorf(
 				"remove old mirror for project %q: %w",
 				name,
@@ -174,90 +172,4 @@ func (m *ProjectManager) stopAllLocked() {
 		m.stopProjectLocked(project)
 		delete(m.projects, name)
 	}
-}
-
-// removeProjectMirror removes only Markdown files and empty directories from
-// a project's destination. Non-Markdown files are never deleted.
-func removeProjectMirror(destination string) error {
-	destination, err := filepath.Abs(destination)
-	if err != nil {
-		return err
-	}
-
-	info, err := os.Stat(destination)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("destination is not a directory: %s", destination)
-	}
-
-	if err := removeMarkdownFiles(destination); err != nil {
-		return err
-	}
-
-	entries, err := os.ReadDir(destination)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-
-	if len(entries) == 0 {
-		if err := os.Remove(destination); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func removeMarkdownFiles(root string) error {
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return err
-	}
-
-	for _, entry := range entries {
-		path := filepath.Join(root, entry.Name())
-
-		if entry.IsDir() {
-			if err := removeMarkdownFiles(path); err != nil {
-				return err
-			}
-
-			remaining, err := os.ReadDir(path)
-			if err != nil {
-				if os.IsNotExist(err) {
-					continue
-				}
-				return err
-			}
-
-			if len(remaining) == 0 {
-				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-					return err
-				}
-			}
-
-			continue
-		}
-
-		if isMarkdownFile(entry.Name()) {
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-func isMarkdownFile(name string) bool {
-	ext := strings.ToLower(filepath.Ext(name))
-	return ext == ".md" || ext == ".markdown"
 }
