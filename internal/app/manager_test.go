@@ -184,3 +184,36 @@ func waitForManagerFile(t *testing.T, path, expected string) {
 
 	t.Fatalf("file %s: expected %q, got %q", path, expected, string(data))
 }
+
+func TestProjectManagerStopWaitsForProjects(t *testing.T) {
+	root := t.TempDir()
+
+	source := filepath.Join(root, "source")
+	destination := filepath.Join(root, "destination")
+
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	writeManagerTestFile(t, filepath.Join(source, "README.md"), "# Test")
+
+	ctx := context.Background()
+
+	manager := NewProjectManager()
+
+	project := config.ResolvedProject{
+		Name:        "test",
+		Source:      source,
+		Destination: destination,
+	}
+
+	if err := manager.Start(ctx, []config.ResolvedProject{project}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	manager.Stop()
+
+	if len(manager.projects) != 0 {
+		t.Fatalf("expected no managed projects after Stop, got %d", len(manager.projects))
+	}
+}

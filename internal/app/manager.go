@@ -144,11 +144,18 @@ func (m *ProjectManager) stopProjectLocked(project *managedProject) {
 	project.cancel()
 	_ = project.watcher.Close()
 
-	select {
-	case <-project.done:
-	case <-context.Background().Done():
-	}
+	<-project.done
 }
+
+// func (m *ProjectManager) stopProjectLocked(project *managedProject) {
+// 	project.cancel()
+// 	_ = project.watcher.Close()
+//
+// 	select {
+// 	case <-project.done:
+// 	case <-context.Background().Done():
+// 	}
+// }
 
 func (m *ProjectManager) stopAllLocked() {
 	for name, project := range m.projects {
