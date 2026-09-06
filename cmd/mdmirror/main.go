@@ -32,7 +32,7 @@ Usage:
 Commands:
   init      Create the default configuration file
   add       Add a project to the configuration file
-  list      List configured 
+  list      List configured projects
   remove    Remove a project from the configuration file
   sync      Mirror Markdown files from source to destination
   watch     Watch source and automatically keep the mirror synchronized
@@ -48,6 +48,9 @@ func main() {
 	}
 
 	switch os.Args[1] {
+	case "help", "--help", "-h":
+		usage()
+
 	case "init":
 		runInit()
 
