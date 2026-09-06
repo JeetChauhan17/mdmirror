@@ -217,3 +217,118 @@ func TestProjectManagerStopWaitsForProjects(t *testing.T) {
 		t.Fatalf("expected no managed projects after Stop, got %d", len(manager.projects))
 	}
 }
+
+func TestProjectManagerReconcileRemovesProjectMirror(t *testing.T) {
+	root := t.TempDir()
+
+	sourceA := filepath.Join(root, "source-a")
+	destinationA := filepath.Join(root, "vault", "a")
+
+	if err := os.MkdirAll(sourceA, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	writeManagerTestFile(
+		t,
+		filepath.Join(sourceA, "README.md"),
+		"# A",
+	)
+
+	writeManagerTestFile(
+		t,
+		filepath.Join(destinationA, "keep.txt"),
+		"do not delete",
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	manager := NewProjectManager()
+
+	project := config.ResolvedProject{
+		Name:        "a",
+		Source:      sourceA,
+		Destination: destinationA,
+	}
+
+	if err := manager.Start(ctx, []config.ResolvedProject{project}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	defer manager.Stop()
+
+	waitForManagerFile(
+		t,
+		filepath.Join(destinationA, "README.md"),
+		"# A",
+	)
+
+	if err := manager.Reconcile(ctx, nil); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(destinationA, "README.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected README.md to be removed, got err=%v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(destinationA, "keep.txt")); err != nil {
+		t.Fatalf("expected non-Markdown file to remain: %v", err)
+	}
+
+	if _, exists := manager.projects["a"]; exists {
+		t.Fatal("project a should have been removed from manager")
+	}
+}
+func TestProjectManagerReconcileRemovesEmptyProjectMirror(t *testing.T) {
+	root := t.TempDir()
+
+	source := filepath.Join(root, "source")
+	destination := filepath.Join(root, "vault", "project")
+
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	writeManagerTestFile(
+		t,
+		filepath.Join(source, "README.md"),
+		"# Project",
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	manager := NewProjectManager()
+
+	project := config.ResolvedProject{
+		Name:        "project",
+		Source:      source,
+		Destination: destination,
+	}
+
+	if err := manager.Start(ctx, []config.ResolvedProject{project}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	waitForManagerFile(
+		t,
+		filepath.Join(destination, "README.md"),
+		"# Project",
+	)
+
+	if err := manager.Reconcile(ctx, nil); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(destination, "README.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected README.md to be removed, got err=%v", err)
+	}
+
+	if _, err := os.Stat(destination); !os.IsNotExist(err) {
+		t.Fatalf("expected empty project destination to be removed, got err=%v", err)
+	}
+
+	if _, exists := manager.projects["project"]; exists {
+		t.Fatal("project should have been removed from manager")
+	}
+}

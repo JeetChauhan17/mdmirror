@@ -82,6 +82,9 @@ func (a *App) ReloadConfig(ctx context.Context, configPath string) error {
 // RunReloadLoop starts the configured projects and periodically reloads the
 // configuration. Invalid reloads are ignored so the last known-good state
 // continues running.
+//
+// Repeated identical reload errors are reported only once. A successful
+// reload after an error reports that configuration reload has recovered.
 func (a *App) RunReloadLoop(
 	ctx context.Context,
 	configPath string,
@@ -100,14 +103,33 @@ func (a *App) RunReloadLoop(
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	var lastReloadError string
+
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 
 		case <-ticker.C:
-			if err := a.ReloadConfig(ctx, configPath); err != nil {
-				fmt.Printf("Warning: configuration reload failed: %v\n", err)
+			err := a.ReloadConfig(ctx, configPath)
+
+			if err == nil {
+				if lastReloadError != "" {
+					fmt.Println("Configuration reload recovered.")
+					lastReloadError = ""
+				}
+
+				continue
+			}
+
+			errText := err.Error()
+
+			if errText != lastReloadError {
+				fmt.Printf(
+					"Warning: configuration reload failed: %v\n",
+					err,
+				)
+				lastReloadError = errText
 			}
 		}
 	}

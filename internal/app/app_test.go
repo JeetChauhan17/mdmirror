@@ -361,3 +361,125 @@ func TestReconcileAddsProject(t *testing.T) {
 		t.Fatalf("expected 2 managed projects, got %d", len(application.manager.projects))
 	}
 }
+
+func TestReloadConfigKeepsLastKnownGoodConfiguration(t *testing.T) {
+	root := t.TempDir()
+
+	sourceA := filepath.Join(root, "source-a")
+	sourceB := filepath.Join(root, "source-b")
+	vault := filepath.Join(root, "vault")
+	configDir := filepath.Join(root, "config")
+	configPath := filepath.Join(configDir, "config.toml")
+
+	for _, path := range []string{sourceA, sourceB, configDir} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	writeFile(t, filepath.Join(sourceA, "a.md"), "# A")
+	writeFile(t, filepath.Join(sourceB, "b.md"), "# B")
+
+	initialConfig := `vault = "` + vault + `"
+
+[[projects]]
+name = "project-a"
+source = "` + sourceA + `"
+`
+
+	if err := os.WriteFile(
+		configPath,
+		[]byte(initialConfig),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := cfg.Resolve(configDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	application := New(resolved)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := application.manager.Start(ctx, resolved.Projects); err != nil {
+		t.Fatal(err)
+	}
+	defer application.manager.Stop()
+
+	waitForFile(
+		t,
+		filepath.Join(vault, "project-a", "a.md"),
+	)
+
+	invalidConfig := `vault = "` + vault + `"
+
+[[projects]]
+name = "project-a"
+source =
+`
+
+	if err := os.WriteFile(
+		configPath,
+		[]byte(invalidConfig),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := application.ReloadConfig(ctx, configPath); err == nil {
+		t.Fatal("expected invalid configuration reload to fail")
+	}
+
+	if _, exists := application.manager.projects["project-a"]; !exists {
+		t.Fatal("last-known-good project should remain active")
+	}
+
+	if _, exists := application.manager.projects["project-b"]; exists {
+		t.Fatal("project-b should not have been started")
+	}
+
+	validConfig := `vault = "` + vault + `"
+
+[[projects]]
+name = "project-a"
+source = "` + sourceA + `"
+
+[[projects]]
+name = "project-b"
+source = "` + sourceB + `"
+`
+
+	if err := os.WriteFile(
+		configPath,
+		[]byte(validConfig),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := application.ReloadConfig(ctx, configPath); err != nil {
+		t.Fatalf("recovery reload failed: %v", err)
+	}
+
+	if _, exists := application.manager.projects["project-a"]; !exists {
+		t.Fatal("project-a should remain active after recovery")
+	}
+
+	if _, exists := application.manager.projects["project-b"]; !exists {
+		t.Fatal("project-b should be active after recovery")
+	}
+
+	waitForFile(
+		t,
+		filepath.Join(vault, "project-b", "b.md"),
+	)
+}
