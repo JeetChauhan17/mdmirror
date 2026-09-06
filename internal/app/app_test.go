@@ -362,6 +362,63 @@ func TestReconcileAddsProject(t *testing.T) {
 	}
 }
 
+func TestReconcileRemovesProjectAndCleansMirror(t *testing.T) {
+	root := t.TempDir()
+
+	source := filepath.Join(root, "source")
+	vault := filepath.Join(root, "vault")
+	destination := filepath.Join(vault, "project")
+
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	writeFile(t, filepath.Join(source, "README.md"), "# Project")
+	writeFile(t, filepath.Join(source, "notes.txt"), "not mirrored")
+
+	cfg := config.ResolvedConfig{
+		Vault: vault,
+		Projects: []config.ResolvedProject{
+			{
+				Name:        "project",
+				Source:      source,
+				Destination: destination,
+			},
+		},
+	}
+
+	application := New(cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := application.manager.Start(ctx, cfg.Projects); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer application.manager.Stop()
+
+	waitForFile(t, filepath.Join(destination, "README.md"))
+
+	if _, err := os.Stat(filepath.Join(destination, "notes.txt")); !os.IsNotExist(err) {
+		t.Fatal("non-Markdown file was mirrored")
+	}
+
+	if err := application.Reconcile(ctx, config.ResolvedConfig{
+		Vault:    vault,
+		Projects: nil,
+	}); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	if _, exists := application.manager.projects["project"]; exists {
+		t.Fatal("removed project is still managed")
+	}
+
+	if _, err := os.Stat(destination); !os.IsNotExist(err) {
+		t.Fatalf("project mirror still exists: err = %v", err)
+	}
+}
+
 func TestReloadConfigKeepsLastKnownGoodConfiguration(t *testing.T) {
 	root := t.TempDir()
 
