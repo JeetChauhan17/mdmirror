@@ -23,7 +23,9 @@ type Watcher struct {
 }
 
 func New(source, destination string) (*Watcher, error) {
-	source, err := filepath.Abs(source)
+	var err error
+
+	source, err = filepath.Abs(source)
 	if err != nil {
 		return nil, fmt.Errorf("resolve source path: %w", err)
 	}
@@ -73,6 +75,61 @@ func New(source, destination string) (*Watcher, error) {
 	return w, nil
 }
 
+// func New(source, destination string) (*Watcher, error) {
+// 	// source, err := filepath.Abs(source)
+// 	source, err = filepath.Abs(source)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("resolve source path: %w", err)
+// 	}
+//
+// 	destination, err := filepath.Abs(destination)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("resolve destination path: %w", err)
+// 	}
+//
+// 	source = filepath.Clean(source)
+// 	destination = filepath.Clean(destination)
+//
+// 	if source == destination {
+// 		return nil, fmt.Errorf("source and destination cannot be the same directory")
+// 	}
+//
+// 	info, err := os.Stat(source)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("stat source: %w", err)
+// 	}
+//
+// 	if !info.IsDir() {
+// 		return nil, fmt.Errorf("source is not a directory: %s", source)
+// 	}
+//
+// 	if isPathInside(destination, source) {
+// 		return nil, fmt.Errorf("destination cannot be inside source")
+// 	}
+//
+// 	fsWatcher, err := fsnotify.NewWatcher()
+// 	if err != nil {
+// 		return nil, fmt.Errorf("create filesystem watcher: %w", err)
+// 	}
+//
+// 	w := &Watcher{
+// 		source:      source,
+// 		destination: destination,
+// 		debounce:    defaultDebounce,
+// 		fsWatcher:   fsWatcher,
+// 	}
+//
+// 	if err := addDirectories(fsWatcher, source); err != nil {
+// 		_ = fsWatcher.Close()
+// 		return nil, fmt.Errorf("watch source: %w", err)
+// 	}
+//
+// 	return w, nil
+// }
+
+// Start performs an initial synchronization and then watches the source
+// tree for changes. Multiple filesystem events within the debounce window
+// are collapsed into a single full mirror operation.
 func (w *Watcher) Start(ctx context.Context) error {
 	if err := mirror.Mirror(w.source, w.destination); err != nil {
 		return fmt.Errorf("initial mirror: %w", err)
@@ -81,18 +138,37 @@ func (w *Watcher) Start(ctx context.Context) error {
 	var timer *time.Timer
 	var timerC <-chan time.Time
 
-	defer func() {
-		if timer != nil {
-			timer.Stop()
+	stopTimer := func() {
+		if timer == nil {
+			return
 		}
-	}()
+
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+
+		timerC = nil
+	}
+
+	defer stopTimer()
 
 	scheduleSync := func() {
-		if timer != nil {
-			timer.Stop()
+		if timer == nil {
+			timer = time.NewTimer(w.debounce)
+		} else {
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+
+			timer.Reset(w.debounce)
 		}
 
-		timer = time.NewTimer(w.debounce)
 		timerC = timer.C
 	}
 
@@ -123,6 +199,10 @@ func (w *Watcher) Start(ctx context.Context) error {
 
 		case <-timerC:
 			timerC = nil
+
+			if err := mirror.Mirror(w.source, w.destination); err != nil {
+				return fmt.Errorf("sync after filesystem change: %w", err)
+			}
 		}
 	}
 }
@@ -136,143 +216,20 @@ func (w *Watcher) Close() error {
 }
 
 func (w *Watcher) handleEvent(event fsnotify.Event) error {
-	// Directory events need special handling because a directory can
-	// contain many Markdown files.
-	if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
-		if event.Op&fsnotify.Create != 0 {
+	// When a new directory appears, fsnotify does not automatically watch
+	// its children. Add the directory tree to the watcher immediately.
+	if event.Op&fsnotify.Create != 0 {
+		if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
 			if err := addDirectories(w.fsWatcher, event.Name); err != nil {
 				return fmt.Errorf("watch new directory %s: %w", event.Name, err)
 			}
-
-			return w.syncDirectory(event.Name)
-		}
-
-		return nil
-	}
-
-	// A removed/renamed path no longer exists in the source tree.
-	// Remove the corresponding mirrored path.
-	if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
-		if isMarkdown(event.Name) {
-			if err := w.removeMirrorFile(event.Name); err != nil {
-				return err
-			}
-		} else {
-			_ = w.removeMirrorDirectory(event.Name)
-		}
-
-		return nil
-	}
-
-	// Create/write events for Markdown files only need that one file
-	// copied to the mirror.
-	if event.Op&(fsnotify.Create|fsnotify.Write) != 0 {
-		if isMarkdown(event.Name) {
-			return w.syncFile(event.Name)
 		}
 	}
 
+	// Remove/Rename events are intentionally not synchronized here.
+	// The subsequent debounced full mirror reconciles additions, changes,
+	// renames, and deletions against the current source tree.
 	return nil
-}
-
-func (w *Watcher) syncFile(sourcePath string) error {
-	info, err := os.Stat(sourcePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return w.removeMirrorFile(sourcePath)
-		}
-
-		return fmt.Errorf("stat changed file %s: %w", sourcePath, err)
-	}
-
-	if info.IsDir() || !isMarkdown(filepath.Base(sourcePath)) {
-		return nil
-	}
-
-	target, err := w.destinationPath(sourcePath)
-	if err != nil {
-		return err
-	}
-
-	if err := copyFile(sourcePath, target); err != nil {
-		return fmt.Errorf("copy changed file %s: %w", sourcePath, err)
-	}
-
-	return nil
-}
-
-func (w *Watcher) syncDirectory(sourcePath string) error {
-	err := filepath.WalkDir(sourcePath, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-
-		if entry.Type()&os.ModeSymlink != 0 {
-			if entry.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		if entry.IsDir() {
-			return nil
-		}
-
-		if !isMarkdown(entry.Name()) {
-			return nil
-		}
-
-		return w.syncFile(path)
-	})
-
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-
-		return fmt.Errorf("sync directory %s: %w", sourcePath, err)
-	}
-
-	return nil
-}
-
-func (w *Watcher) removeMirrorFile(sourcePath string) error {
-	target, err := w.destinationPath(sourcePath)
-	if err != nil {
-		return err
-	}
-
-	if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove mirrored file %s: %w", target, err)
-	}
-
-	return removeEmptyDirectories(filepath.Dir(target))
-}
-
-func (w *Watcher) removeMirrorDirectory(sourcePath string) error {
-	target, err := w.destinationPath(sourcePath)
-	if err != nil {
-		return err
-	}
-
-	if err := os.RemoveAll(target); err != nil {
-		return fmt.Errorf("remove mirrored directory %s: %w", target, err)
-	}
-
-	return nil
-}
-
-func (w *Watcher) destinationPath(sourcePath string) (string, error) {
-	relative, err := filepath.Rel(w.source, sourcePath)
-	if err != nil {
-		return "", fmt.Errorf("calculate relative path for %s: %w", sourcePath, err)
-	}
-
-	if relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path is outside source: %s", sourcePath)
-	}
-
-	return filepath.Join(w.destination, relative), nil
 }
 
 func addDirectories(w *fsnotify.Watcher, root string) error {
@@ -319,65 +276,4 @@ func isPathInside(path, parent string) bool {
 	}
 
 	return !strings.HasPrefix(relative, ".."+string(filepath.Separator))
-}
-
-func copyFile(source, destination string) error {
-	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
-		return err
-	}
-
-	input, err := os.Open(source)
-	if err != nil {
-		return err
-	}
-	defer input.Close()
-
-	info, err := input.Stat()
-	if err != nil {
-		return err
-	}
-
-	output, err := os.Create(destination)
-	if err != nil {
-		return err
-	}
-
-	_, copyErr := output.ReadFrom(input)
-	closeErr := output.Close()
-
-	if copyErr != nil {
-		return copyErr
-	}
-
-	if closeErr != nil {
-		return closeErr
-	}
-
-	return os.Chmod(destination, info.Mode().Perm())
-}
-
-func removeEmptyDirectories(root string) error {
-	var directories []string
-
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-
-		if path == root || !entry.IsDir() {
-			return nil
-		}
-
-		directories = append(directories, path)
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-
-	for i := len(directories) - 1; i >= 0; i-- {
-		_ = os.Remove(directories[i])
-	}
-
-	return nil
 }

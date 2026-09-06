@@ -224,3 +224,75 @@ func assertFileNotExists(t *testing.T, path string) {
 func errorsIsContextCanceled(err error) bool {
 	return err != nil && err.Error() == context.Canceled.Error()
 }
+
+func TestWatcherDebouncesChanges(t *testing.T) {
+	source := t.TempDir()
+	destination := filepath.Join(t.TempDir(), "mirror")
+
+	writeTestFile(t, filepath.Join(source, "README.md"), "# Initial")
+
+	w, err := New(source, destination)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer w.Close()
+
+	// Make the debounce window intentionally large enough that we can
+	// generate several writes inside a single window.
+	// w.debounce = 200 * time.Millisecond
+	w.debounce = 300 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+
+	go func() {
+		errCh <- w.Start(ctx)
+	}()
+
+	waitForFileContent(t, filepath.Join(destination, "README.md"), "# Initial")
+
+	// Perform several writes rapidly. The watcher should eventually
+	// produce the final state rather than treating every write as a
+	// separate synchronization.
+	// for i := 0; i < 5; i++ {
+	// 	writeTestFile(
+	// 		t,
+	// 		filepath.Join(source, "README.md"),
+	// 		"# Update",
+	// 	)
+	// 	time.Sleep(25 * time.Millisecond)
+	// }
+	//
+	// waitForFileContent(
+	// 	t,
+	// 	filepath.Join(destination, "README.md"),
+	// 	"# Update",
+	// )
+	writeTestFile(t, filepath.Join(source, "README.md"), "# Update")
+
+	time.Sleep(50 * time.Millisecond)
+
+	content, err := os.ReadFile(filepath.Join(destination, "README.md"))
+	if err != nil {
+		t.Fatalf("read mirrored file before debounce: %v", err)
+	}
+
+	if string(content) != "# Initial" {
+		t.Fatalf("file synced before debounce expired: got %q", string(content))
+	}
+
+	waitForFileContent(t, filepath.Join(destination, "README.md"), "# Update")
+
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if err != nil && !errorsIsContextCanceled(err) {
+			t.Fatalf("watcher returned error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("watcher did not stop after context cancellation")
+	}
+}
