@@ -3,11 +3,11 @@ package app
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/JeetChauhan17/mdmirror/internal/config"
 	"github.com/JeetChauhan17/mdmirror/internal/mirror"
-	"path/filepath"
 )
 
 type App struct {
@@ -51,7 +51,6 @@ func (a *App) Watch(ctx context.Context) error {
 }
 
 // Reconcile updates the running projects to match the supplied configuration.
-
 func (a *App) Reconcile(ctx context.Context, cfg config.ResolvedConfig) error {
 	if err := a.manager.Reconcile(ctx, cfg.Projects); err != nil {
 		return err
@@ -61,15 +60,14 @@ func (a *App) Reconcile(ctx context.Context, cfg config.ResolvedConfig) error {
 	return nil
 }
 
+// ReloadConfig loads, resolves, and applies a configuration file.
 func (a *App) ReloadConfig(ctx context.Context, configPath string) error {
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	baseDir := filepath.Dir(configPath)
-
-	resolved, err := cfg.Resolve(baseDir)
+	resolved, err := cfg.Resolve(filepath.Dir(configPath))
 	if err != nil {
 		return fmt.Errorf("resolve config: %w", err)
 	}
@@ -81,17 +79,12 @@ func (a *App) ReloadConfig(ctx context.Context, configPath string) error {
 	return nil
 }
 
-// RunReloadLoop periodically reloads and reconciles the supplied configuration.
-// func (a *App) RunReloadLoop(
-// 	ctx context.Context,
-// 	configPath string,
-// 	interval time.Duration,
-// ) error {
-
+// RunReloadLoop starts the configured projects and periodically reloads the
+// configuration. Invalid reloads are ignored so the last known-good state
+// continues running.
 func (a *App) RunReloadLoop(
 	ctx context.Context,
 	configPath string,
-	baseDir string,
 	interval time.Duration,
 ) error {
 	if interval <= 0 {
@@ -113,22 +106,9 @@ func (a *App) RunReloadLoop(
 			return ctx.Err()
 
 		case <-ticker.C:
-			cfg, err := config.Load(configPath)
-			if err != nil {
-				return fmt.Errorf("reload configuration: %w", err)
+			if err := a.ReloadConfig(ctx, configPath); err != nil {
+				fmt.Printf("Warning: configuration reload failed: %v\n", err)
 			}
-
-			// resolved, err := cfg.Resolve("")
-			resolved, err := cfg.Resolve(baseDir)
-			if err != nil {
-				return fmt.Errorf("resolve reloaded configuration: %w", err)
-			}
-
-			if err := a.manager.Reconcile(ctx, resolved.Projects); err != nil {
-				return fmt.Errorf("reconcile projects: %w", err)
-			}
-
-			a.config = resolved
 		}
 	}
 }
