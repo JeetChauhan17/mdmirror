@@ -75,58 +75,6 @@ func New(source, destination string) (*Watcher, error) {
 	return w, nil
 }
 
-// func New(source, destination string) (*Watcher, error) {
-// 	// source, err := filepath.Abs(source)
-// 	source, err = filepath.Abs(source)
-// 	if err != nil {
-// 		return nil, fmt.Errorf("resolve source path: %w", err)
-// 	}
-//
-// 	destination, err := filepath.Abs(destination)
-// 	if err != nil {
-// 		return nil, fmt.Errorf("resolve destination path: %w", err)
-// 	}
-//
-// 	source = filepath.Clean(source)
-// 	destination = filepath.Clean(destination)
-//
-// 	if source == destination {
-// 		return nil, fmt.Errorf("source and destination cannot be the same directory")
-// 	}
-//
-// 	info, err := os.Stat(source)
-// 	if err != nil {
-// 		return nil, fmt.Errorf("stat source: %w", err)
-// 	}
-//
-// 	if !info.IsDir() {
-// 		return nil, fmt.Errorf("source is not a directory: %s", source)
-// 	}
-//
-// 	if isPathInside(destination, source) {
-// 		return nil, fmt.Errorf("destination cannot be inside source")
-// 	}
-//
-// 	fsWatcher, err := fsnotify.NewWatcher()
-// 	if err != nil {
-// 		return nil, fmt.Errorf("create filesystem watcher: %w", err)
-// 	}
-//
-// 	w := &Watcher{
-// 		source:      source,
-// 		destination: destination,
-// 		debounce:    defaultDebounce,
-// 		fsWatcher:   fsWatcher,
-// 	}
-//
-// 	if err := addDirectories(fsWatcher, source); err != nil {
-// 		_ = fsWatcher.Close()
-// 		return nil, fmt.Errorf("watch source: %w", err)
-// 	}
-//
-// 	return w, nil
-// }
-
 // Start performs an initial synchronization and then watches the source
 // tree for changes. Multiple filesystem events within the debounce window
 // are collapsed into a single full mirror operation.
