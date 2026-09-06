@@ -125,6 +125,58 @@ func TestWatch(t *testing.T) {
 	}
 }
 
+func TestWatchStopsProjectManager(t *testing.T) {
+	root := t.TempDir()
+
+	source := filepath.Join(root, "source")
+	vault := filepath.Join(root, "vault")
+
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.ResolvedConfig{
+		Vault: vault,
+		Projects: []config.ResolvedProject{
+			{
+				Name:        "project",
+				Source:      source,
+				Destination: filepath.Join(vault, "project"),
+			},
+		},
+	}
+
+	application := New(cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+
+	go func() {
+		errCh <- application.Watch(ctx)
+	}()
+
+	waitForFile(t, filepath.Join(vault, "project"))
+
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if err != context.Canceled {
+			t.Fatalf("Watch() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Watch() did not stop after cancellation")
+	}
+
+	if len(application.manager.projects) != 0 {
+		t.Fatalf(
+			"project manager still has %d projects after Watch() stopped",
+			len(application.manager.projects),
+		)
+	}
+}
+
 func writeFile(t *testing.T, path, contents string) {
 	t.Helper()
 
