@@ -1,6 +1,5 @@
 # Build output
-mdmirror
-
+/mdmirror
 # OS/editor files
 .DS_Store
 *.swp
