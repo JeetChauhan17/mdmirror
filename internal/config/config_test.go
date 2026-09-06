@@ -77,7 +77,7 @@ func TestValidate(t *testing.T) {
 			config: Config{
 				Vault: "/tmp/vault",
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name: "empty project name",

@@ -56,10 +56,6 @@ func (c Config) Validate() error {
 		return errors.New("vault path cannot be empty")
 	}
 
-	if len(c.Projects) == 0 {
-		return errors.New("config must contain at least one project")
-	}
-
 	seenNames := make(map[string]struct{})
 
 	for i, project := range c.Projects {
