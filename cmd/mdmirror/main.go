@@ -16,6 +16,8 @@ import (
 	"github.com/JeetChauhan17/mdmirror/internal/watcher"
 )
 
+var version = "dev"
+
 func usage() {
 	fmt.Print(`mdmirror - documentation-only project mirror
 
@@ -50,6 +52,9 @@ func main() {
 	switch os.Args[1] {
 	case "help", "--help", "-h":
 		usage()
+
+	case "version":
+		fmt.Println(version)
 
 	case "init":
 		runInit()
